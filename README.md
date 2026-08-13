@@ -6,14 +6,11 @@ lifecycle slice.
 
 ## Migration status
 
-This repository has completed standalone qualification. Its `v0.1.0` tag,
-immutable catalog entry, and locked registry consumer replay form the one-way
-cutover gate. Until that gate is complete, the authoritative source remains
-[`tokalang/toka/official/sqlite`](https://github.com/tokalang/toka/tree/main/official/sqlite).
-
-Cutover will be one-way. The compiler repository copy will be removed only
-after the existing service-kit consumer has moved to the released, locked
-package; this repository will not become a long-lived mirror or submodule.
+The one-way cutover completed on 2026-08-13. This repository is now the
+canonical source for `official/sqlite`; its immutable `v0.1.0` release is in
+the public catalog, and both the minimal registry consumer and service-kit
+replay the locked package online and offline. The former compiler-repository
+copy has been retired rather than retained as a mirror or submodule.
 
 ## API
 
