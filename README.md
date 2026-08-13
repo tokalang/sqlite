@@ -1,14 +1,14 @@
 # `official/sqlite`
 
-Official opt-in SQLite package for Toka. Package version `0.1.0` is a release
-candidate and has not yet been published. The API currently implements the
-phase 1 database lifecycle slice.
+Official opt-in SQLite package for Toka. Package version `0.1.0` is the first
+standalone release line. The API currently implements the phase 1 database
+lifecycle slice.
 
 ## Migration status
 
-This repository is undergoing standalone qualification and is not yet the
-canonical package source. Until qualification, release, and locked registry
-consumer replay are complete, the authoritative source remains
+This repository has completed standalone qualification. Its `v0.1.0` tag,
+immutable catalog entry, and locked registry consumer replay form the one-way
+cutover gate. Until that gate is complete, the authoritative source remains
 [`tokalang/toka/official/sqlite`](https://github.com/tokalang/toka/tree/main/official/sqlite).
 
 Cutover will be one-way. The compiler repository copy will be removed only
