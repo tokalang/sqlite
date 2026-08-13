@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile and execute the opt-in native SQLite bridge preflight."""
+"""Qualify the opt-in native SQLite bridge and a locked package consumer."""
 
 from __future__ import annotations
 
@@ -7,17 +7,21 @@ import json
 import os
 from pathlib import Path
 import platform
+import shlex
 import shutil
 import subprocess
 import tempfile
 
 
-ROOT = Path(__file__).resolve().parents[3]
-PACKAGE = ROOT / "official" / "sqlite"
+PACKAGE = Path(__file__).resolve().parents[1]
+
+
+class QualificationError(RuntimeError):
+    pass
 
 
 def run(argv: list[str], *, cwd: Path,
-        env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         argv,
         cwd=cwd,
@@ -25,42 +29,121 @@ def run(argv: list[str], *, cwd: Path,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        timeout=120,
     )
     if result.returncode != 0:
-        raise RuntimeError(
-            "command failed: %s\nstdout:\n%s\nstderr:\n%s"
-            % (" ".join(argv), result.stdout, result.stderr)
+        raise QualificationError(
+            "command failed (%d): %s\nstdout:\n%s\nstderr:\n%s"
+            % (result.returncode, " ".join(argv), result.stdout, result.stderr)
         )
     return result
 
 
-def pkg_config(package: str, mode: str) -> list[str]:
-    tool = shutil.which("pkg-config")
+def find_tool(name: str, env: dict[str, str]) -> str | None:
+    return shutil.which(name, path=env.get("PATH"))
+
+
+def pkg_config(package: str, mode: str, env: dict[str, str]) -> list[str]:
+    tool = find_tool("pkg-config", env)
     if tool is None:
-        raise RuntimeError("official/sqlite requires pkg-config for native qualification")
-    result = run([tool, mode, package], cwd=ROOT)
-    return result.stdout.split()
+        raise QualificationError("official/sqlite requires pkg-config for qualification")
+    return shlex.split(run([tool, mode, package], cwd=PACKAGE, env=env).stdout)
 
 
-def optional_pkg_libs(package: str) -> list[str]:
-    tool = shutil.which("pkg-config")
+def optional_pkg_libs(package: str, env: dict[str, str]) -> list[str]:
+    tool = find_tool("pkg-config", env)
     if tool is None:
         return []
     probe = subprocess.run(
-        [tool, "--libs", package], cwd=ROOT, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        [tool, "--libs", package], cwd=PACKAGE, env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120,
     )
-    if probe.returncode != 0:
-        return []
-    return probe.stdout.split()
+    return shlex.split(probe.stdout) if probe.returncode == 0 else []
 
 
-def make_sdk(work: Path) -> Path:
+def resolve_toolchain(env: dict[str, str]) -> tuple[Path, Path, Path, Path, Path]:
+    root_is_set = "TOKA_ROOT" in env
+    explicit_keys = ("TOKA", "TOKAC", "TOKA_LIB")
+    explicit_set = [key for key in explicit_keys if key in env]
+    if root_is_set and explicit_set:
+        raise QualificationError(
+            "set either TOKA_ROOT or TOKA/TOKAC/TOKA_LIB, not both"
+        )
+    if root_is_set:
+        if not env["TOKA_ROOT"].strip():
+            raise QualificationError("TOKA_ROOT must not be empty")
+        root = Path(env["TOKA_ROOT"]).expanduser().resolve()
+        toka = root / "build" / "bin" / "toka"
+        tokac = root / "build" / "bin" / "tokac"
+        library = root / "lib"
+        runtime = library / "sys" / "toka_rt.o"
+        build_driver = root / "tools" / "scripts" / "toka_build.py"
+    else:
+        if len(explicit_set) != len(explicit_keys):
+            missing = ", ".join(key for key in explicit_keys if key not in env)
+            raise QualificationError(
+                "set TOKA_ROOT or all of TOKA/TOKAC/TOKA_LIB"
+                + (" (missing: " + missing + ")" if missing else "")
+            )
+        empty = [key for key in explicit_keys if not env[key].strip()]
+        if empty:
+            raise QualificationError(
+                "toolchain variables must not be empty: " + ", ".join(empty)
+            )
+        toka = Path(env["TOKA"]).expanduser().resolve()
+        tokac = Path(env["TOKAC"]).expanduser().resolve()
+        library = Path(env["TOKA_LIB"]).expanduser().resolve()
+        runtime = library / "sys" / "toka_rt.o"
+        build_driver = library / "toolchain" / "toka_build.py"
+
+    required_files = {
+        "toka": toka,
+        "tokac": tokac,
+        "toka_rt.o": runtime,
+        "toka_build.py": build_driver,
+    }
+    missing_files = [name for name, path in required_files.items() if not path.is_file()]
+    if not library.is_dir():
+        missing_files.append("TOKA_LIB")
+    if missing_files:
+        raise QualificationError(
+            "incomplete Toka toolchain (missing: %s)" % ", ".join(missing_files)
+        )
+    return toka, tokac, library, runtime, build_driver
+
+
+def compiler_command(env: dict[str, str]) -> list[str]:
+    configured = env.get("CC")
+    if configured is not None:
+        command = shlex.split(configured)
+        if not command:
+            raise QualificationError("CC must name a C compiler")
+        resolved = find_tool(command[0], env)
+        if resolved is None:
+            raise QualificationError("CC compiler was not found: " + command[0])
+        command[0] = resolved
+        return command
+    for candidate in ("clang-20", "clang"):
+        resolved = find_tool(candidate, env)
+        if resolved is not None:
+            return [resolved]
+    raise QualificationError("official/sqlite requires CC, clang-20, or clang")
+
+
+def make_sdk(work: Path, source_library: Path, runtime: Path,
+             build_driver: Path) -> Path:
     library = work / "sdk" / "lib"
-    shutil.copytree(ROOT / "lib", library)
+    shutil.copytree(
+        source_library,
+        library,
+        ignore=shutil.ignore_patterns("*.pyc", "__pycache__"),
+    )
+    runtime_dir = library / "sys"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(runtime, runtime_dir / "toka_rt.o")
     toolchain = library / "toolchain"
-    toolchain.mkdir(exist_ok=True)
-    shutil.copy2(ROOT / "tools" / "scripts" / "toka_build.py", toolchain / "toka_build.py")
+    toolchain.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(build_driver, toolchain / "toka_build.py")
     return library
 
 
@@ -97,54 +180,84 @@ def write_consumer(project: Path, dependency: Path) -> None:
 
 
 def main() -> int:
-    toka = ROOT / "build" / "bin" / "toka"
-    tokac = ROOT / "build" / "bin" / "tokac"
-    runtime = ROOT / "lib" / "sys" / "toka_rt.o"
-    compiler = os.environ.get("CC") or shutil.which("clang")
-    if not toka.is_file() or not tokac.is_file() or not runtime.is_file() or compiler is None:
-        raise RuntimeError("build toka, tokac, and lib/sys/toka_rt.o before qualifying official/sqlite")
+    host_env = dict(os.environ)
+    toka, tokac, source_library, runtime, build_driver = resolve_toolchain(host_env)
+    compiler = compiler_command(host_env)
+    host_env["CC"] = shlex.join(compiler)
 
-    with tempfile.TemporaryDirectory(prefix="toka-sqlite-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="toka-sqlite-package-") as temporary:
         work = Path(temporary)
+        sdk = make_sdk(work, source_library, runtime, build_driver)
+        sdk_runtime = sdk / "sys" / "toka_rt.o"
+        base_env = dict(host_env)
+        base_env.update({"TOKAC": str(tokac), "TOKA_LIB": str(sdk)})
+        base_env.pop("TOKA_ROOT", None)
+        base_env.pop("TOKA", None)
+        base_env.pop("TOKA_OFFLINE", None)
+
+        dependency = work / "sqlite"
+        shutil.copytree(
+            PACKAGE,
+            dependency,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+        )
         bridge_object = work / "sqlite_preflight.o"
-        run([compiler, "-c", str(PACKAGE / "native" / "sqlite_preflight.c"),
-             "-o", str(bridge_object), *pkg_config("sqlite3", "--cflags")], cwd=ROOT)
+        run([*compiler, "-Wall", "-Wextra", "-Werror", "-c",
+             str(dependency / "native" / "sqlite_preflight.c"),
+             "-o", str(bridge_object),
+             *pkg_config("sqlite3", "--cflags", base_env)],
+            cwd=PACKAGE, env=base_env)
+
         for source_name in ("preflight", "vertical"):
             program_ir = work / (source_name + ".ll")
             program = work / source_name
-            run([str(tokac), "-I", str(ROOT / "lib"), "-I", str(PACKAGE / "lib"),
-                 "--emit-llvm", str(PACKAGE / "tests" / (source_name + ".tk")),
-                 "-o", str(program_ir)], cwd=ROOT)
+            run([str(tokac), "-I", str(sdk), "-I", str(dependency / "lib"),
+                 "--emit-llvm", str(dependency / "tests" / (source_name + ".tk")),
+                 "-o", str(program_ir)], cwd=PACKAGE, env=base_env)
 
-            link_args = [compiler, str(program_ir), str(bridge_object), str(runtime),
-                         "-o", str(program), *pkg_config("sqlite3", "--libs")]
+            link_args = [*compiler, str(program_ir), str(bridge_object),
+                         str(sdk_runtime), "-o", str(program),
+                         *pkg_config("sqlite3", "--libs", base_env)]
             # A runtime built with optional TLS support still needs its own link
             # dependencies when this package performs a standalone native link.
             # This is inherited runtime configuration, not a SQLite dependency.
-            link_args.extend(optional_pkg_libs("openssl"))
+            link_args.extend(optional_pkg_libs("openssl", base_env))
             if platform.system() == "Darwin":
-                sdk = run(["xcrun", "--show-sdk-path"], cwd=ROOT).stdout.strip()
-                link_args.extend(["-isysroot", sdk])
-            run(link_args, cwd=ROOT)
-            run([str(program)], cwd=ROOT)
+                macos_sdk = run(
+                    ["xcrun", "--show-sdk-path"], cwd=PACKAGE, env=base_env
+                ).stdout.strip()
+                link_args.extend(["-isysroot", macos_sdk])
+            run(link_args, cwd=PACKAGE, env=base_env)
+            run([str(program)], cwd=PACKAGE, env=base_env)
 
-        sdk = make_sdk(work)
-        dependency = work / "sqlite"
-        shutil.copytree(PACKAGE, dependency)
         consumer = work / "consumer"
         write_consumer(consumer, dependency)
-        environment = dict(os.environ)
-        environment.update({"TOKAC": str(tokac), "TOKA_LIB": str(sdk), "TOKA_OFFLINE": "1"})
-        run([str(toka), "fetch"], cwd=consumer, env=environment)
-        run([str(toka), "build"], cwd=consumer, env=environment)
+        run([str(toka), "fetch"], cwd=consumer, env=base_env)
+        lock = consumer / "package.lock"
+        locked = lock.read_bytes()
+        if not locked.startswith(b"toka-lock-v1\n") or b"sqlite" not in locked:
+            raise QualificationError(
+                "SQLite consumer did not produce a v1 lock with sqlite"
+            )
+
+        offline_env = dict(base_env)
+        offline_env["TOKA_OFFLINE"] = "1"
+        run([str(toka), "fetch"], cwd=consumer, env=offline_env)
+        if lock.read_bytes() != locked:
+            raise QualificationError("offline SQLite fetch changed package.lock")
+        run([str(toka), "build"], cwd=consumer, env=offline_env)
         program = consumer / "target" / "debug" / "sqlite_consumer"
         if not program.is_file():
-            raise RuntimeError("toka build did not produce SQLite consumer")
-        run([str(program)], cwd=consumer, env=environment)
+            raise QualificationError("toka build did not produce SQLite consumer")
+        run([str(program)], cwd=consumer, env=offline_env)
 
     print("official/sqlite qualification: PASSED")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (OSError, QualificationError, subprocess.TimeoutExpired) as error:
+        print("FAIL: " + str(error))
+        raise SystemExit(1)
