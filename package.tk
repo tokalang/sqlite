@@ -2,7 +2,7 @@
 pub const PACKAGE = (
     name = "sqlite",
     identity = "official/sqlite",
-    version = "0.1.1",
+    version = "0.1.2-dev",
     kind = "library",
     license = "Apache-2.0",
     compiler = "1.0.0-rc.6",
