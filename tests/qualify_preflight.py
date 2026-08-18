@@ -62,14 +62,24 @@ def optional_pkg_libs(package: str, env: dict[str, str]) -> list[str]:
 
 
 def resolve_toolchain(env: dict[str, str]) -> tuple[Path, Path, Path, Path, Path]:
+    sdk_is_set = "TOKA_SDK" in env
     root_is_set = "TOKA_ROOT" in env
     explicit_keys = ("TOKA", "TOKAC", "TOKA_LIB")
     explicit_set = [key for key in explicit_keys if key in env]
-    if root_is_set and explicit_set:
+    if (sdk_is_set and root_is_set) or (sdk_is_set and explicit_set) or (root_is_set and explicit_set):
         raise QualificationError(
-            "set either TOKA_ROOT or TOKA/TOKAC/TOKA_LIB, not both"
+            "set either TOKA_SDK, TOKA_ROOT, or TOKA/TOKAC/TOKA_LIB, not a combination"
         )
-    if root_is_set:
+    if sdk_is_set:
+        if not env["TOKA_SDK"].strip():
+            raise QualificationError("TOKA_SDK must not be empty")
+        sdk = Path(env["TOKA_SDK"]).expanduser().resolve()
+        toka = sdk / "bin" / "toka"
+        tokac = sdk / "bin" / "tokac"
+        library = sdk / "lib"
+        runtime = library / "sys" / "toka_rt.o"
+        build_driver = library / "toolchain" / "toka_build.py"
+    elif root_is_set:
         if not env["TOKA_ROOT"].strip():
             raise QualificationError("TOKA_ROOT must not be empty")
         root = Path(env["TOKA_ROOT"]).expanduser().resolve()
@@ -82,7 +92,7 @@ def resolve_toolchain(env: dict[str, str]) -> tuple[Path, Path, Path, Path, Path
         if len(explicit_set) != len(explicit_keys):
             missing = ", ".join(key for key in explicit_keys if key not in env)
             raise QualificationError(
-                "set TOKA_ROOT or all of TOKA/TOKAC/TOKA_LIB"
+                "set TOKA_SDK, TOKA_ROOT or all of TOKA/TOKAC/TOKA_LIB"
                 + (" (missing: " + missing + ")" if missing else "")
             )
         empty = [key for key in explicit_keys if not env[key].strip()]

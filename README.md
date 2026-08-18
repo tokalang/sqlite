@@ -1,16 +1,13 @@
 # `official/sqlite`
 
-Official opt-in SQLite package for Toka. Package version `0.1.0` is the first
-standalone release line. The API currently implements the phase 1 database
+Official opt-in SQLite package for Toka. Package version `0.1.1` upgrades the
+compiler baseline to `1.0.0-rc.6`. The API implements the safe synchronous database
 lifecycle slice.
 
 ## Migration status
 
-The one-way cutover completed on 2026-08-13. This repository is now the
-canonical source for `official/sqlite`; its immutable `v0.1.0` release is in
-the public catalog, and both the minimal registry consumer and service-kit
-replay the locked package online and offline. The former compiler-repository
-copy has been retired rather than retained as a mirror or submodule.
+The canonical source for `official/sqlite` is this repository. Releases `v0.1.0`
+and `v0.1.1` are in the public catalog.
 
 ## API
 
@@ -42,22 +39,12 @@ SQLite dependency.
 
 ## Qualification
 
-The required qualification toolchain is the published Toka `v1.0.0-rc.4` SDK.
-Install SQLite, OpenSSL, pkg-config, and Clang, then provide either an installed
-SDK explicitly:
+The required qualification toolchain is Toka `v1.0.0-rc.6` SDK.
+Provide the installed SDK path via:
 
 ```sh
-TOKA=/path/to/bin/toka \
-TOKAC=/path/to/bin/tokac \
-TOKA_LIB=/path/to/lib \
-python3 tests/qualify_preflight.py
+TOKA_SDK=/path/to/extracted-sdk python3 tests/qualify_preflight.py
 ```
-
-or a Toka source checkout whose `build/bin/toka`, `build/bin/tokac`, and
-`lib/sys/toka_rt.o` have already been built:
-
-```sh
-TOKA_ROOT=/path/to/toka python3 tests/qualify_preflight.py
 ```
 
 Qualification builds and runs the ABI preflight and vertical lifecycle suite,
