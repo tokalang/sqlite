@@ -2,10 +2,10 @@
 pub const PACKAGE = (
     name = "sqlite",
     identity = "official/sqlite",
-    version = "0.1.2-dev",
+    version = "0.1.2",
     kind = "library",
     license = "Apache-2.0",
-    compiler = "1.0.0-rc.6",
+    compiler = "1.0.0-rc.9",
     entry_modules = ("lib/official/sqlite.tk"),
     targets = ("macos", "linux"),
     dependencies = (),

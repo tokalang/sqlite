@@ -1,13 +1,13 @@
 # `official/sqlite`
 
-Official opt-in SQLite package for Toka. Package version `0.1.1` upgrades the
-compiler baseline to `1.0.0-rc.6`. The API implements the safe synchronous database
-lifecycle slice.
+Official opt-in SQLite package for Toka. Package version `0.1.2` is the Toka
+`1.0.0-rc.9` compatibility release candidate. It preserves the safe synchronous
+database lifecycle API from `0.1.1`.
 
 ## Migration status
 
 The canonical source for `official/sqlite` is this repository. Releases `v0.1.0`
-and `v0.1.1` are in the public catalog.
+and `v0.1.1` are in the public catalog; `v0.1.2` is prepared here for RC9.
 
 ## API
 
@@ -39,7 +39,7 @@ SQLite dependency.
 
 ## Qualification
 
-The required qualification toolchain is Toka `v1.0.0-rc.6` SDK.
+The required qualification toolchain is Toka `v1.0.0-rc.9` SDK.
 Provide the installed SDK path via:
 
 ```sh
